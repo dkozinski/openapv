@@ -586,6 +586,20 @@ struct oapve_param {
     unsigned char transfer_characteristics;
     unsigned char matrix_coefficients;
     int           full_range_flag;
+
+    /* mastering display color volume metadata metadata */
+    int                     mdcv_flag;
+    short unsigned int      mdcv_primary_chromaticity_x[3];
+    short unsigned int      mdcv_primary_chromaticity_y[3];
+    short unsigned int      mdcv_white_point_chromaticity_x;
+    short unsigned int      mdcv_white_point_chromaticity_y;
+    unsigned int            mdcv_max_mastering_luminance;
+    unsigned int            mdcv_min_mastering_luminance;
+
+    /* content light level information metadata */
+    int                     cll_flag;
+    short unsigned int      cll_max_cll;
+    short unsigned int      cll_max_fall;
 };
 
 /*****************************************************************************

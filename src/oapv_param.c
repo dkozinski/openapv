@@ -62,6 +62,13 @@ int oapve_param_default(oapve_param_t *param)
     param->transfer_characteristics = 2; // unspecified transfer characteristics
     param->matrix_coefficients = 2; // unspecified matrix coefficients
     param->full_range_flag = 0; // limited range
+
+    // mastering display color volume metadata not set by the user
+    param->mdcv_flag = 0;
+    
+    // content light level information not set by the user
+    param->cll_flag = 0;
+
     return OAPV_OK;
 }
 
@@ -145,6 +152,52 @@ static int get_q_matrix(const char *str, u8 q_matrix[OAPV_BLK_D])
 #define GET_FLOAT_OR_ERR(STR, F, ERR) { \
     char * left; (F) = strtof(STR, &left); \
     if(strlen(left)>0) return (ERR); \
+}
+
+static int parse_master_display(const char* data_string, oapve_param_t *param) {
+    if (data_string == NULL || param == NULL) {
+        fprintf(stderr, "Error: Input pointer is NULL.\n");
+        return -1;
+    }
+
+    int assigned_fields = sscanf(data_string,
+        "G(%hu,%hu)B(%hu,%hu)R(%hu,%hu)WP(%hu,%hu)L(%u,%u)",
+        &param->mdcv_primary_chromaticity_x[2], &param->mdcv_primary_chromaticity_y[2], // G
+        &param->mdcv_primary_chromaticity_x[1], &param->mdcv_primary_chromaticity_y[1], // B
+        &param->mdcv_primary_chromaticity_x[0], &param->mdcv_primary_chromaticity_y[0], // R
+        &param->mdcv_white_point_chromaticity_x, &param->mdcv_white_point_chromaticity_y, // White Point
+        &param->mdcv_max_mastering_luminance, &param->mdcv_min_mastering_luminance       // Luminance
+    );
+
+    // Check if sscanf successfully assigned all expected fields (10 numerical values).
+    const int expected_fields = 10;
+    if (assigned_fields != expected_fields) {
+        fprintf(stderr, "Parsing error: Expected %d fields, found %d.\n", expected_fields, assigned_fields);
+        return OAPV_ERR_INVALID_ARGUMENT;
+    }
+
+    return 0; // Success
+}
+
+static int parse_max_cll(const char* data_string, oapve_param_t *param) {
+    if (data_string == NULL || param == NULL) {
+        fprintf(stderr, "Error: Input pointer is NULL.\n");
+        return -1;
+    }
+
+    int assigned_fields = sscanf(data_string,
+        "%hu,%hu",
+        &param->cll_max_cll, &param->cll_max_fall
+    );
+
+    // Check if sscanf successfully assigned all expected fields (10 numerical values).
+    const int expected_fields = 2;
+    if (assigned_fields != expected_fields) {
+        fprintf(stderr, "Parsing error: Expected %d fields, found %d.\n", expected_fields, assigned_fields);
+        return OAPV_ERR_INVALID_ARGUMENT;
+    }
+
+    return 0; // Success
 }
 
 int oapve_param_parse(oapve_param_t *param, const char *name,  const char *value)
@@ -338,6 +391,18 @@ int oapve_param_parse(oapve_param_t *param, const char *name,  const char *value
         }
         param->full_range_flag = ti0;
         param->color_description_present_flag = 1;
+    }
+    NAME_CMP("master-display") { // mastering display color volume metadata
+        if(parse_master_display(value, param)) {
+            return OAPV_ERR_INVALID_ARGUMENT;
+        }
+        param->mdcv_flag = 1;
+    }
+    NAME_CMP("max-cll") { // maximum content light level
+       if(parse_max_cll(value, param)) {
+            return OAPV_ERR_INVALID_ARGUMENT;
+       }
+        param->cll_flag = 1;
     }
     else {
         return OAPV_ERR_INVALID_ARGUMENT;

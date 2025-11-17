@@ -33,6 +33,7 @@
 #include "oapv_app_util.h"
 #include "oapv_app_args.h"
 #include "oapv_app_y4m.h"
+#include "oapv_port.h"
 
 #define MAX_BS_BUF   (128 * 1024 * 1024)
 #define MAX_NUM_FRMS (1)           // supports only 1-frame in an access unit
@@ -44,6 +45,24 @@ typedef enum _STATES {
     STATE_SKIPPING,
     STATE_STOP
 } STATES;
+
+/* Mastering display colour volume metadata*/
+typedef struct md_mdcv md_mdcv_t;
+struct md_mdcv {
+    u16 primary_chromaticity_x[3];
+    u16 primary_chromaticity_y[3];
+    u16 white_point_chromaticity_x;
+    u16 white_point_chromaticity_y;
+    u32 max_mastering_luminance;
+    u32 min_mastering_luminance;
+};
+
+/* Content light level information*/
+typedef struct md_cll md_cll_t;
+struct md_cll {
+    u16 max_cll;
+    u16 max_fall;
+};
 
 // clang-format off
 
@@ -275,6 +294,14 @@ static const args_opt_t enc_args_opts[] = {
         ARGS_NO_KEY,  "hash", ARGS_VAL_TYPE_NONE, 0, NULL,
         "embed frame hash value for conformance checking in decoding"
     },
+    {
+        ARGS_NO_KEY,  "master-display", ARGS_VAL_TYPE_STRING, 0, NULL,
+        "mastering display color volume metadata"
+    },
+    {
+        ARGS_NO_KEY,  "max-cll", ARGS_VAL_TYPE_STRING, 0, NULL,
+        "content light level information metadata"
+    },
     {ARGS_END_KEY, "", ARGS_VAL_TYPE_NONE, 0, NULL, ""} /* termination */
 };
 
@@ -318,11 +345,14 @@ typedef struct args_var {
     char           tile_w[16];
     char           tile_h[16];
 
-    int           color_primaries;
-    int           color_transfer;
-    int           color_matrix;
-    int           color_range;
+    int            color_primaries;
+    int            color_transfer;
+    int            color_matrix;
+    int            color_range;
 
+    char           master_display[512];
+    char           max_cll[64];
+    
     oapve_param_t *param;
 } args_var_t;
 
@@ -392,6 +422,10 @@ static args_var_t *args_init_vars(args_parser_t *args, oapve_param_t *param)
     vars->color_matrix = -1; /* unset */
     args_set_variable_by_key_long(opts, "color-range", &vars->color_range);
     vars->color_range = -1; /* unset */
+
+    args_set_variable_by_key_long(opts, "master-display", vars->master_display);
+    args_set_variable_by_key_long(opts, "max-cll", vars->max_cll);
+
 
     return vars;
 }
@@ -750,6 +784,13 @@ static int update_param(args_var_t *vars, oapve_param_t *param)
 
     UPDATE_A_PARAM_W_KEY_VAL(param, "tile-w", vars->tile_w);
     UPDATE_A_PARAM_W_KEY_VAL(param, "tile-h", vars->tile_h);
+
+    UPDATE_A_PARAM_W_KEY_VAL(param, "tile-w", vars->tile_w);
+    UPDATE_A_PARAM_W_KEY_VAL(param, "tile-h", vars->tile_h);
+
+    UPDATE_A_PARAM_W_KEY_VAL(param, "master-display", vars->master_display);
+    UPDATE_A_PARAM_W_KEY_VAL(param, "max-cll", vars->max_cll);
+
     return 0;
 }
 
@@ -961,6 +1002,46 @@ int main(int argc, const char **argv)
         logerr("ERR: cannot create OAPV metadata handler\n");
         ret = -1;
         goto ERR;
+    }
+    
+    if(param->mdcv_flag) {
+         md_mdcv_t mdcv;
+
+        mdcv.primary_chromaticity_x[0] = param->mdcv_primary_chromaticity_x[0];
+        mdcv.primary_chromaticity_x[1] = param->mdcv_primary_chromaticity_x[1];
+        mdcv.primary_chromaticity_x[2] = param->mdcv_primary_chromaticity_x[2];
+        
+        mdcv.primary_chromaticity_y[0] = param->mdcv_primary_chromaticity_y[0];
+        mdcv.primary_chromaticity_y[1] = param->mdcv_primary_chromaticity_y[1];
+        mdcv.primary_chromaticity_y[2] = param->mdcv_primary_chromaticity_y[2];
+
+        mdcv.white_point_chromaticity_x = param->mdcv_white_point_chromaticity_x;
+        mdcv.white_point_chromaticity_y = param->mdcv_white_point_chromaticity_y;
+
+        mdcv.min_mastering_luminance = param->mdcv_min_mastering_luminance;
+        mdcv.max_mastering_luminance = param->mdcv_max_mastering_luminance;
+
+        void *data = &mdcv;
+        size_t size = sizeof(md_mdcv_t);
+        if(oapvm_set(mid, 1, OAPV_METADATA_MDCV, data, size)) {
+            logerr("ERR: cannot set mastering display color metadata\n");
+            ret = -1;
+            goto ERR;
+        }
+    }
+    
+    if(param->cll_flag) {
+        md_cll_t cll;
+        cll.max_cll = param->cll_max_cll;
+        cll.max_fall = param->cll_max_fall;
+
+        void *data = &cll;
+        size_t size = sizeof(md_cll_t);
+        if(oapvm_set(mid, 1, OAPV_METADATA_CLL, data, size)) {
+            logerr("ERR: cannot set content light level metadata\n");
+            ret = -1;
+            goto ERR;
+        }
     }
 
     if(set_extra_config(id, args_var, param)) {
