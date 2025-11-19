@@ -40,6 +40,8 @@
 #define FRM_IDX      (0)           // supports only 1-frame in an access unit
 #define MAX_NUM_CC   (OAPV_MAX_CC) // Max number of color componets (upto 4:4:4:4)
 
+#define MAX_METADATA_PAYLOADS (8)
+
 typedef enum _STATES {
     STATE_ENCODING,
     STATE_SKIPPING,
@@ -49,19 +51,25 @@ typedef enum _STATES {
 /* Mastering display colour volume metadata*/
 typedef struct md_mdcv md_mdcv_t;
 struct md_mdcv {
-    u16 primary_chromaticity_x[3];
-    u16 primary_chromaticity_y[3];
-    u16 white_point_chromaticity_x;
-    u16 white_point_chromaticity_y;
-    u32 max_mastering_luminance;
-    u32 min_mastering_luminance;
+    u16 primary_chromaticity_x[3];  /* u(16) */
+    u16 primary_chromaticity_y[3];  /* u(16) */
+    u16 white_point_chromaticity_x; /* u(16) */
+    u16 white_point_chromaticity_y; /* u(16) */
+    u32 max_mastering_luminance;    /* u(32) */
+    u32 min_mastering_luminance;    /* u(32) */
 };
 
 /* Content light level information*/
 typedef struct md_cll md_cll_t;
 struct md_cll {
-    u16 max_cll;
-    u16 max_fall;
+    u16 max_cll;  /* u(16) */
+    u16 max_fall; /* u(16) */
+};
+
+typedef struct metadata metadata_t;
+struct metadata {
+    uint32_t num_plds;
+    oapvm_payload_t payloads[MAX_METADATA_PAYLOADS]; 
 };
 
 // clang-format off
@@ -785,11 +793,95 @@ static int update_param(args_var_t *vars, oapve_param_t *param)
     UPDATE_A_PARAM_W_KEY_VAL(param, "tile-w", vars->tile_w);
     UPDATE_A_PARAM_W_KEY_VAL(param, "tile-h", vars->tile_h);
 
-    UPDATE_A_PARAM_W_KEY_VAL(param, "tile-w", vars->tile_w);
-    UPDATE_A_PARAM_W_KEY_VAL(param, "tile-h", vars->tile_h);
+    return 0;
+}
 
-    UPDATE_A_PARAM_W_KEY_VAL(param, "master-display", vars->master_display);
-    UPDATE_A_PARAM_W_KEY_VAL(param, "max-cll", vars->max_cll);
+static int parse_master_display(const char* data_string, md_mdcv_t *mdcv) {
+    if (data_string == NULL || mdcv == NULL) {
+        fprintf(stderr, "Error: Input pointer is NULL.\n");
+        return -1;
+    }
+
+    int assigned_fields = sscanf(data_string,
+        "G(%hu,%hu)B(%hu,%hu)R(%hu,%hu)WP(%hu,%hu)L(%u,%u)",
+        &mdcv->primary_chromaticity_x[2], &mdcv->primary_chromaticity_y[2], // G
+        &mdcv->primary_chromaticity_x[1], &mdcv->primary_chromaticity_y[1], // B
+        &mdcv->primary_chromaticity_x[0], &mdcv->primary_chromaticity_y[0], // R
+        &mdcv->white_point_chromaticity_x, &mdcv->white_point_chromaticity_y, // White Point
+        &mdcv->max_mastering_luminance, &mdcv->min_mastering_luminance       // Luminance
+    );
+
+    // Check if sscanf successfully assigned all expected fields (10 numerical values).
+    const int expected_fields = 10;
+    if (assigned_fields != expected_fields) {
+        fprintf(stderr, "Parsing error: Expected %d fields, found %d.\n", expected_fields, assigned_fields);
+        return OAPV_ERR_INVALID_ARGUMENT;
+    }
+
+    return 0; // Success
+}
+
+static int parse_max_cll(const char* data_string, md_cll_t *cll) {
+    if (data_string == NULL || cll == NULL) {
+        fprintf(stderr, "Error: Input pointer is NULL.\n");
+        return -1;
+    }
+
+    int assigned_fields = sscanf(data_string,
+        "%hu,%hu",
+        &cll->max_cll, &cll->max_fall
+    );
+
+    // Check if sscanf successfully assigned all expected fields (10 numerical values).
+    const int expected_fields = 2;
+    if (assigned_fields != expected_fields) {
+        fprintf(stderr, "Parsing error: Expected %d fields, found %d.\n", expected_fields, assigned_fields);
+        return OAPV_ERR_INVALID_ARGUMENT;
+    }
+
+    return 0; // Success
+}
+
+static int update_metadata(args_var_t *vars, metadata_t *metadata)
+{
+    if (vars == NULL || metadata == NULL) {
+        fprintf(stderr, "Error: Input pointer is NULL.\n");
+        return -1;
+    }
+
+    if(strlen(vars->master_display) > 0) {
+        
+        void *data = malloc(sizeof(md_mdcv_t));
+        
+        if(parse_master_display(vars->master_display, (md_mdcv_t*)data)) {
+            fprintf(stderr, "input value (%s) of %s is invalid\n", vars->master_display, "master-display");
+            return -1;
+        }
+       
+        metadata->payloads[metadata->num_plds].group_id = 1;
+        metadata->payloads[metadata->num_plds].type = OAPV_METADATA_MDCV;
+        metadata->payloads[metadata->num_plds].size = sizeof(md_mdcv_t);
+        metadata->payloads[metadata->num_plds].data = data;
+
+        metadata->num_plds++;
+        
+    } 
+    
+    if(strlen(vars->max_cll) > 0) {
+        void *data = malloc(sizeof(md_cll_t));
+        
+        if(parse_max_cll(vars->max_cll, (md_cll_t*)data)) {
+            fprintf(stderr, "input value (%s) of %s is invalid\n", vars->max_cll, "max-cli");
+            return -1;
+        }
+       
+        metadata->payloads[metadata->num_plds].group_id = 1;
+        metadata->payloads[metadata->num_plds].type = OAPV_METADATA_CLL;
+        metadata->payloads[metadata->num_plds].size = sizeof(md_cll_t);
+        metadata->payloads[metadata->num_plds].data = data;
+
+        metadata->num_plds++;
+    }
 
     return 0;
 }
@@ -826,6 +918,8 @@ int main(int argc, const char **argv)
     int            cfmt;                      // color format
     const int      num_frames = MAX_NUM_FRMS; // number of frames in an access unit
 
+    metadata_t     metadata = {0};
+    
     // print logo
     logv2("  ____                ___   ___ _   __\n");
     logv2(" / __ \\___  ___ ___  / _ | / _ \\ | / / Encoder (v%s)\n", oapv_version(NULL));
@@ -1003,45 +1097,14 @@ int main(int argc, const char **argv)
         ret = -1;
         goto ERR;
     }
+
+    update_metadata(args_var, &metadata);
     
-    if(param->mdcv_flag) {
-         md_mdcv_t mdcv;
-
-        mdcv.primary_chromaticity_x[0] = param->mdcv_primary_chromaticity_x[0];
-        mdcv.primary_chromaticity_x[1] = param->mdcv_primary_chromaticity_x[1];
-        mdcv.primary_chromaticity_x[2] = param->mdcv_primary_chromaticity_x[2];
-        
-        mdcv.primary_chromaticity_y[0] = param->mdcv_primary_chromaticity_y[0];
-        mdcv.primary_chromaticity_y[1] = param->mdcv_primary_chromaticity_y[1];
-        mdcv.primary_chromaticity_y[2] = param->mdcv_primary_chromaticity_y[2];
-
-        mdcv.white_point_chromaticity_x = param->mdcv_white_point_chromaticity_x;
-        mdcv.white_point_chromaticity_y = param->mdcv_white_point_chromaticity_y;
-
-        mdcv.min_mastering_luminance = param->mdcv_min_mastering_luminance;
-        mdcv.max_mastering_luminance = param->mdcv_max_mastering_luminance;
-
-        void *data = &mdcv;
-        size_t size = sizeof(md_mdcv_t);
-        if(oapvm_set(mid, 1, OAPV_METADATA_MDCV, data, size)) {
-            logerr("ERR: cannot set mastering display color metadata\n");
-            ret = -1;
-            goto ERR;
-        }
-    }
-    
-    if(param->cll_flag) {
-        md_cll_t cll;
-        cll.max_cll = param->cll_max_cll;
-        cll.max_fall = param->cll_max_fall;
-
-        void *data = &cll;
-        size_t size = sizeof(md_cll_t);
-        if(oapvm_set(mid, 1, OAPV_METADATA_CLL, data, size)) {
-            logerr("ERR: cannot set content light level metadata\n");
-            ret = -1;
-            goto ERR;
-        }
+    ret = oapvm_set_all(mid, metadata.payloads, metadata.num_plds);
+    if(OAPV_FAILED(ret)) {
+        logerr("ERR: cannot set metadata\n");
+        ret = -1;
+        goto ERR;
     }
 
     if(set_extra_config(id, args_var, param)) {
@@ -1303,6 +1366,11 @@ ERR:
         args->release(args);
     if(args_var)
         free(args_var);
+
+    for(int i=0; i<metadata.num_plds; i++) {
+        free(metadata.payloads[i].data);
+        metadata.payloads[i].data = NULL;
+    }
 
     return ret;
 }
