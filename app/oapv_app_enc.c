@@ -35,12 +35,6 @@
 #include "oapv_app_y4m.h"
 #include "oapv_port.h"
 
-#if defined(_WIN64) || defined(_WIN32)
-#include <winsock2.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
-#include <arpa/inet.h>
-#endif
 
 #define MAX_BS_BUF   (128 * 1024 * 1024)
 #define MAX_NUM_FRMS (1)           // supports only 1-frame in an access unit
@@ -856,29 +850,28 @@ static void serialize_metadata_mdcv(const md_mdcv_t* mdcv, uint8_t* buffer) {
     uint32_t beu32_val;
 
     for (i = 0; i < 3; i++) {
-        // convert Host Byte Order na Network Byte Order (Big Endian).
-        beu16_val = htons(mdcv->primary_chromaticity_x[i]);
+        beu16_val = ne2be16(mdcv->primary_chromaticity_x[i]);
         memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
         current_ptr += sizeof(uint16_t);
 
-        beu16_val = htons(mdcv->primary_chromaticity_y[i]);
+        beu16_val = ne2be16(mdcv->primary_chromaticity_y[i]);
         memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
         current_ptr += sizeof(uint16_t);
     }
 
-    beu16_val = htons(mdcv->white_point_chromaticity_x);
+    beu16_val = ne2be16(mdcv->white_point_chromaticity_x);
     memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
     current_ptr += sizeof(uint16_t);
 
-    beu16_val = htons(mdcv->white_point_chromaticity_y);
-    memcpy(current_ptr, &beu32_val, sizeof(uint16_t));
+    beu16_val = ne2be16(mdcv->white_point_chromaticity_y);
+    memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
     current_ptr += sizeof(uint16_t);
 
-    beu32_val = htonl(mdcv->max_mastering_luminance);
+    beu32_val = ne2be32(mdcv->max_mastering_luminance);
     memcpy(current_ptr, &beu32_val, sizeof(uint32_t));
     current_ptr += sizeof(uint32_t);
 
-    beu32_val = htonl(mdcv->min_mastering_luminance);
+    beu32_val = ne2be32(mdcv->min_mastering_luminance);
     memcpy(current_ptr, &beu32_val, sizeof(uint32_t));
     current_ptr += sizeof(uint32_t);
 }
@@ -887,11 +880,11 @@ static void serialize_metadata_cll(const md_cll_t* cll, uint8_t* buffer) {
     uint8_t* current_ptr = buffer;
     uint16_t beu16_val;
 
-    beu16_val = htons(cll->max_cll);
+    beu16_val = ne2be16(cll->max_cll);
     memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
     current_ptr += sizeof(uint16_t);
 
-    beu16_val = htons(cll->max_fall);
+    beu16_val = ne2be16(cll->max_fall);
     memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
     current_ptr += sizeof(uint16_t);
 }
