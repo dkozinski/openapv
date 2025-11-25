@@ -35,6 +35,13 @@
 #include "oapv_app_y4m.h"
 #include "oapv_port.h"
 
+#if defined(_WIN64) || defined(_WIN32)
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <arpa/inet.h>
+#endif
+
 #define MAX_BS_BUF   (128 * 1024 * 1024)
 #define MAX_NUM_FRMS (1)           // supports only 1-frame in an access unit
 #define FRM_IDX      (0)           // supports only 1-frame in an access unit
@@ -842,6 +849,53 @@ static int parse_max_cll(const char* data_string, md_cll_t *cll) {
     return 0; // Success
 }
 
+static void serialize_metadata_mdcv(const md_mdcv_t* mdcv, uint8_t* buffer) {
+    int i;
+    uint8_t* current_ptr = buffer;
+    uint16_t beu16_val;
+    uint32_t beu32_val;
+
+    for (i = 0; i < 3; i++) {
+        // convert Host Byte Order na Network Byte Order (Big Endian).
+        beu16_val = htons(mdcv->primary_chromaticity_x[i]);
+        memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
+        current_ptr += sizeof(uint16_t);
+
+        beu16_val = htons(mdcv->primary_chromaticity_y[i]);
+        memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
+        current_ptr += sizeof(uint16_t);
+    }
+
+    beu16_val = htons(mdcv->white_point_chromaticity_x);
+    memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
+    current_ptr += sizeof(uint16_t);
+
+    beu16_val = htons(mdcv->white_point_chromaticity_y);
+    memcpy(current_ptr, &beu32_val, sizeof(uint16_t));
+    current_ptr += sizeof(uint16_t);
+
+    beu32_val = htonl(mdcv->max_mastering_luminance);
+    memcpy(current_ptr, &beu32_val, sizeof(uint32_t));
+    current_ptr += sizeof(uint32_t);
+
+    beu32_val = htonl(mdcv->min_mastering_luminance);
+    memcpy(current_ptr, &beu32_val, sizeof(uint32_t));
+    current_ptr += sizeof(uint32_t);
+}
+
+static void serialize_metadata_cll(const md_cll_t* cll, uint8_t* buffer) {
+    uint8_t* current_ptr = buffer;
+    uint16_t beu16_val;
+
+    beu16_val = htons(cll->max_cll);
+    memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
+    current_ptr += sizeof(uint16_t);
+
+    beu16_val = htons(cll->max_fall);
+    memcpy(current_ptr, &beu16_val, sizeof(uint16_t));
+    current_ptr += sizeof(uint16_t);
+}
+
 static int update_metadata(args_var_t *vars, metadata_t *metadata)
 {
     if (vars == NULL || metadata == NULL) {
@@ -850,35 +904,42 @@ static int update_metadata(args_var_t *vars, metadata_t *metadata)
     }
 
     if(strlen(vars->master_display) > 0) {
-        
-        void *data = malloc(sizeof(md_mdcv_t));
-        
-        if(parse_master_display(vars->master_display, (md_mdcv_t*)data)) {
+        md_mdcv_t mdcv;
+        size_t mdcv_buffer_size = 6*sizeof(uint16_t) + 2*sizeof(uint16_t) + 2*sizeof(uint32_t);
+        uint8_t* mdcv_buffer = (uint8_t*)malloc(mdcv_buffer_size);
+
+        if(parse_master_display(vars->master_display, &mdcv)) {
             fprintf(stderr, "input value (%s) of %s is invalid\n", vars->master_display, "master-display");
             return -1;
         }
-       
+
+        serialize_metadata_mdcv(&mdcv, mdcv_buffer);
+
         metadata->payloads[metadata->num_plds].group_id = 1;
         metadata->payloads[metadata->num_plds].type = OAPV_METADATA_MDCV;
-        metadata->payloads[metadata->num_plds].size = sizeof(md_mdcv_t);
-        metadata->payloads[metadata->num_plds].data = data;
+        metadata->payloads[metadata->num_plds].size = mdcv_buffer_size;
+        metadata->payloads[metadata->num_plds].data = mdcv_buffer;
 
         metadata->num_plds++;
-        
-    } 
-    
+    }
+
     if(strlen(vars->max_cll) > 0) {
-        void *data = malloc(sizeof(md_cll_t));
-        
-        if(parse_max_cll(vars->max_cll, (md_cll_t*)data)) {
+
+        md_cll_t cll;
+        size_t cll_buffer_size = 2*sizeof(uint16_t);
+        uint8_t* cll_buffer = malloc(cll_buffer_size);
+
+        if(parse_max_cll(vars->max_cll, &cll)) {
             fprintf(stderr, "input value (%s) of %s is invalid\n", vars->max_cll, "max-cli");
             return -1;
         }
-       
+
+        serialize_metadata_cll(&cll, cll_buffer);
+
         metadata->payloads[metadata->num_plds].group_id = 1;
         metadata->payloads[metadata->num_plds].type = OAPV_METADATA_CLL;
-        metadata->payloads[metadata->num_plds].size = sizeof(md_cll_t);
-        metadata->payloads[metadata->num_plds].data = data;
+        metadata->payloads[metadata->num_plds].size = cll_buffer_size;
+        metadata->payloads[metadata->num_plds].data = cll_buffer;
 
         metadata->num_plds++;
     }
